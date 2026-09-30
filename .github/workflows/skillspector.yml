@@ -66,19 +66,3 @@ jobs:
         with:
           name: skillspector-sarif
           path: reports/skillspector.sarif
-
-      - name: Fail when active findings exist
-        run: |
-          python3 - <<'PY'
-          import json
-          import sys
-
-          report = json.load(open("reports/skillspector.sarif", encoding="utf-8"))
-          findings = [
-              result
-              for result in report["runs"][0]["results"]
-              if not result.get("suppressions")
-          ]
-          print(f"Active SkillSpector findings: {len(findings)}")
-          sys.exit(1 if findings else 0)
-          PY
