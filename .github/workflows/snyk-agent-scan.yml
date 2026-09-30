@@ -1,0 +1,43 @@
+name: Snyk Agent Scan
+
+on:
+  push:
+    paths:
+      - "agentic-library/skills/**"
+  pull_request:
+    paths:
+      - "agentic-library/skills/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Scan skill files
+        shell: bash
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          skill_files=()
+          for file in agentic-library/skills/*/SKILL.md; do
+            [[ -f "$file" ]] && skill_files+=("$file")
+          done
+
+          if (( ${#skill_files[@]} == 0 )); then
+            echo "No skills found under agentic-library/skills/"
+            exit 0
+          fi
+
+          uvx --python 3.13 snyk-agent-scan@0.6.8 scan \
+            --ci --dangerously-run-mcp-servers "${skill_files[@]}"
