@@ -88,10 +88,18 @@ def skillspector(raw_dir: Path, output: Path) -> None:
     write_sarif(output, driver, results)
 
 
-def skill_directory(scan_path: str) -> Path:
+def skill_directory(scan_path: str, skill_name: str) -> Path:
     path = Path(scan_path).expanduser()
     path = (path if path.is_absolute() else ROOT / path).resolve()
-    directory = path.parent if path.name == "SKILL.md" else path
+
+    if path.name == "SKILL.md":
+        directory = path.parent
+    elif (path / "SKILL.md").is_file():
+        directory = path
+    else:
+        if Path(skill_name).name != skill_name or skill_name in ("", ".", ".."):
+            raise ValueError(f"Unsafe Snyk skill name: {skill_name}")
+        directory = (path / skill_name).resolve()
 
     if not directory.is_relative_to(SKILLS) or not (
         directory / "SKILL.md"
@@ -129,8 +137,9 @@ def snyk(input_path: Path, output: Path) -> None:
         ):
             raise ValueError("MCP findings need a separate location mapping")
 
-        skill_dir = skill_directory(response["path"])
         for skill in response.get("skill_risks", []):
+            skill_dir = skill_directory(response["path"], skill["name"])
+
             for risk_name, detail in skill.get("risk_indexes", {}).items():
                 score = int(detail["score"])
                 level, security_severity = snyk_severity(score)
