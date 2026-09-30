@@ -4,17 +4,24 @@ on:
   push:
     paths:
       - "agentic-library/skills/**"
+      - "scripts/sarif_reports.py"
+      - ".github/workflows/skillspector.yml"
   pull_request:
     paths:
       - "agentic-library/skills/**"
+      - "scripts/sarif_reports.py"
+      - ".github/workflows/skillspector.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   scan-skills:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -29,17 +36,49 @@ jobs:
           uv tool install "skillspector @ git+https://github.com/NVIDIA/skillspector.git@v2.12.0"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
 
-      - name: Scan every skill
+      - name: Scan each skill
         shell: bash
         run: |
-          found=0
+          mkdir -p reports/skillspector-raw
+          shopt -s nullglob
           for skill_file in agentic-library/skills/*/SKILL.md; do
-            [[ -f "$skill_file" ]] || continue
-            found=1
             skill_dir="${skill_file%/SKILL.md}"
-            echo "Scanning $skill_dir"
-            skillspector scan "$skill_dir" --no-llm
+            skill_name="${skill_dir##*/}"
+            skillspector scan "$skill_dir" \
+              --no-llm \
+              --format sarif \
+              --output "reports/skillspector-raw/$skill_name.sarif"
           done
-          if [[ "$found" -eq 0 ]]; then
-            echo "No skills found under agentic-library/skills/"
-          fi
+
+      - name: Prepare repository paths and one SARIF report
+        run: |
+          python3 scripts/sarif_reports.py \
+            skillspector reports/skillspector-raw reports/skillspector.sarif
+
+      - name: Upload findings to Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: reports/skillspector.sarif
+          category: skillspector-skills
+
+      - name: Save SARIF report
+        uses: actions/upload-artifact@v7
+        with:
+          name: skillspector-sarif
+          path: reports/skillspector.sarif
+
+      - name: Fail when active findings exist
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+
+          report = json.load(open("reports/skillspector.sarif", encoding="utf-8"))
+          findings = [
+              result
+              for result in report["runs"][0]["results"]
+              if not result.get("suppressions")
+          ]
+          print(f"Active SkillSpector findings: {len(findings)}")
+          sys.exit(1 if findings else 0)
+          PY
