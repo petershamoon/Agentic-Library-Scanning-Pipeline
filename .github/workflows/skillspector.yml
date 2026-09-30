@@ -1,0 +1,45 @@
+name: NVIDIA SkillSpector
+
+on:
+  push:
+    paths:
+      - "agentic-library/skills/**"
+  pull_request:
+    paths:
+      - "agentic-library/skills/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install SkillSpector
+        run: |
+          uv tool install "skillspector @ git+https://github.com/NVIDIA/skillspector.git@v2.12.0"
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+      - name: Scan every skill
+        shell: bash
+        run: |
+          found=0
+          for skill_file in agentic-library/skills/*/SKILL.md; do
+            [[ -f "$skill_file" ]] || continue
+            found=1
+            skill_dir="${skill_file%/SKILL.md}"
+            echo "Scanning $skill_dir"
+            skillspector scan "$skill_dir" --no-llm
+          done
+          if [[ "$found" -eq 0 ]]; then
+            echo "No skills found under agentic-library/skills/"
+          fi
