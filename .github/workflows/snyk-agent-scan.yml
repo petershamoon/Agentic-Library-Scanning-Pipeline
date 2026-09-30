@@ -4,17 +4,25 @@ on:
   push:
     paths:
       - "agentic-library/skills/**"
+      - "scripts/sarif_reports.py"
+      - ".github/workflows/snyk-agent-scan.yml"
   pull_request:
     paths:
       - "agentic-library/skills/**"
+      - "scripts/sarif_reports.py"
+      - ".github/workflows/snyk-agent-scan.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   scan-skills:
+    # Fork PRs cannot access SNYK_TOKEN.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -24,20 +32,52 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Scan skill files
+      - name: Scan skills and save Snyk JSON
+        id: scan
+        continue-on-error: true
         shell: bash
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
-          skill_files=()
-          for file in agentic-library/skills/*/SKILL.md; do
-            [[ -f "$file" ]] && skill_files+=("$file")
-          done
+          mkdir -p reports
+          shopt -s nullglob
+          skill_files=(agentic-library/skills/*/SKILL.md)
 
           if (( ${#skill_files[@]} == 0 )); then
-            echo "No skills found under agentic-library/skills/"
+            printf '{"scan_path_responses":[]}\n' > reports/snyk.json
             exit 0
           fi
 
+          if [[ -z "$SNYK_TOKEN" ]]; then
+            echo "Missing SNYK_TOKEN Actions secret"
+            exit 2
+          fi
+
           uvx --python 3.13 snyk-agent-scan@0.6.8 scan \
-            --ci --dangerously-run-mcp-servers "${skill_files[@]}"
+            --ci \
+            --dangerously-run-mcp-servers \
+            --json \
+            "${skill_files[@]}" > reports/snyk.json
+
+      - name: Convert Snyk JSON to SARIF
+        run: |
+          python3 scripts/sarif_reports.py \
+            snyk reports/snyk.json reports/snyk.sarif
+
+      - name: Upload findings to Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: reports/snyk.sarif
+          category: snyk-agent-scan-skills
+
+      - name: Save original Snyk report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snyk-agent-scan-json
+          path: reports/snyk.json
+          if-no-files-found: warn
+
+      - name: Preserve Snyk scan result
+        if: always() && steps.scan.outcome == 'failure'
+        run: exit 1
